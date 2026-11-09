@@ -152,6 +152,8 @@ const fmt    = n => Math.floor(n).toLocaleString('pl-PL');
 function save(){ S.t = Date.now(); try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} }
 
 function render(){
+  document.getElementById('waveHud').querySelector('strong').textContent=boss?'BOSS!':waveKills+' / '+waveGoal;
+  document.getElementById('waveHud').querySelector('small').textContent=boss?'POKONAJ GO!':'ETAP '+stage+' · DO POJAWIENIA SIĘ BOSSA';
   document.getElementById('bal').textContent = fmt(S.coins);
   document.getElementById('en').textContent = fmt(S.energy)+'/'+fmt(maxEn());
   document.getElementById('enl').textContent = S.energy < 1 ? 'Brak nabojów – przeładowuję…' : 'Naboje';
@@ -226,6 +228,7 @@ function shriek(){
 function bell(){ if (muted || !AC) return; const t = AC.currentTime; [2093,2637,2093].forEach((f,i)=>tone(t+i*.09,.35,f,f*.985,.05)); }
 function ricochet(){ if (muted || !AC) return; const t = AC.currentTime; tone(t,.2,2800,800,.1); noise(t,.07,'bandpass',4200,2000,.3,1.4); }
 function hitSound(){ if (muted || !AC) return; const t = AC.currentTime; tone(t,.14,110,45,.55); noise(t,.12,'lowpass',900,200,.5,1); }
+document.getElementById('upgradeToggle').onclick=()=>{const shop=document.getElementById('shop');shop.classList.toggle('open');document.getElementById('upgradeToggle').textContent=shop.classList.contains('open')?'✕ Zamknij ulepszenia':'✦ Ulepszenia';};
 document.getElementById('mute').onclick = e=>{ muted = !muted; e.target.textContent = 'Dźwięk: '+(muted?'wył.':'wł.'); };
 
 /* ================= SCENA: Rynek ================= */
@@ -383,9 +386,10 @@ const SPLAT = '<svg viewBox="0 0 100 80"><g fill="#b3202a"><ellipse cx="50" cy="
 
 const men = [], MAX_MEN = 6, W = 64, H = 100;
 let nextSpawn = 0, car = null, nextCar = performance.now() + 7000 + Math.random()*5000;
+let stage=1,waveKills=0,waveGoal=200,boss=null,intermission=false;
 const Y0 = () => area.clientHeight*.36, Y1 = () => area.clientHeight*.6;   // ludziki biegają daleko od karabinu
 const sc = y => .55 + .5*Math.max(0, Math.min(1, (y-Y0())/(Y1()-Y0())));
-const tgt = m => m.isCar ? {x:m.x, y:m.y - 50*m.s} : {x:m.x, y:m.y - H*m.s*.5};
+const tgt = m => m.isBoss ? {x:m.x,y:m.y} : m.isCar ? {x:m.x,y:m.y-50*m.s} : {x:m.x,y:m.y-H*m.s*.5};
 const TYPES = {m:{k:1,pts:1,n:3}, w:{k:.94,pts:2,n:2}, k:{k:.75,pts:5,n:1}};
 const MCOL = ['#1f3f8a','#6a2a3a','#2f5a3a'], SK = ['#f1c9a0','#e8b88a','#d9a273','#f5d5b5'], HR = ['#4a3424','#2e2018','#8a6a3a','#6a4a2a'], WHR = ['#7a4a24','#2e2018','#c9a25a']; let mc = 0, wc = 0;
 function newDir(m){
@@ -471,8 +475,9 @@ const gunEl = document.getElementById('gunrot');
 let flash = 0, fl = {x:0,y:0,a:0};
 function P(o){ par.push(Object.assign({life:.5,max:.5,g:0,drag:0,r:2,vx:0,vy:0}, o, {max:o.life})); }
 
-function pick(x, y){
-  let best = null;
+function pick(x,y){
+  if(boss&&!intermission&&Math.hypot(x-boss.x,y-boss.y)<boss.r)return boss;
+  let best=null;
   for (const m of men){ if (m.dead) continue; const s = m.s, pad = 4 + (m.type === 'k' ? 6 : 0);
     if (Math.abs(x-m.x) <= 26*s+pad && y <= m.y+3+pad && y >= m.y-96*s-pad && (!best || m.y > best.y)) best = m; }
   if (!best && car && !car.dead){ const c = car, pad = 8; if (Math.abs(x-c.x) <= 62*c.s+pad && y <= c.y+pad && y >= c.y-92*c.s-pad) best = c; }
@@ -483,7 +488,7 @@ function shoot(cx, cy){
   const ang = Math.atan2(t.y-py, t.x-px);
   gunEl.style.transform = 'rotate('+ang+'rad)';
   if (S.energy < 1){ render(); return; }
-  S.energy -= 1; if (m) m.dead = true;
+  S.energy -= 1; if (m && !m.isBoss) m.dead = true;
   const mx = px + Math.cos(ang)*130, my = py + Math.sin(ang)*130;
   const svg = gunEl.firstElementChild; svg.classList.remove('kick'); void svg.getBoundingClientRect(); svg.classList.add('kick');
   flash = 1; fl = {x:mx, y:my, a:ang};
@@ -504,8 +509,16 @@ function miss(b){
   ricochet();
 }
 function impact(b){
-  const m = b.m, t = tgt(m), n = m.pts + S.lv.tap; m.el.remove(); men.splice(men.indexOf(m),1);
-  S.coins += n;
+  const m=b.m;
+  if(m&&m.isBoss){
+    const damage=2+S.lv.tap;boss.hp=Math.max(0,boss.hp-damage);
+    document.getElementById('bossHpText').textContent=boss.hp+' / '+boss.maxHp;
+    document.querySelector('#bossHealth i').style.width=(boss.hp/boss.maxHp*100)+'%';
+    for(let i=0;i<10;i++){const a=Math.random()*6.28,sp=70+Math.random()*220;P({t:'blood',x:boss.x,y:boss.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-50,g:480,life:.35+Math.random()*.3,r:1.5+Math.random()*2,c:'#c51e35'});}
+    hitSound();if(boss.hp<=0)defeatBoss();return;
+  }
+  const t=tgt(m),n=m.pts+S.lv.tap; m.el.remove(); men.splice(men.indexOf(m),1);
+  S.coins += n; waveKills++; render(); if(waveKills>=waveGoal&&!boss&&!intermission)summonBoss();
   const cols = ['#b3202a','#8e1520','#d12a35'];
   for (let i=0;i<30;i++){ const a = b.dir + (Math.random()-.5)*2.6, sp = 70+Math.random()*340;
     P({t:'blood', x:t.x, y:t.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-40, g:760, life:.45+Math.random()*.55, r:1.2+Math.random()*2.4, c:cols[i%3]}); }
@@ -524,6 +537,19 @@ function impact(b){
   if (m.type === 'k') shriek();
   if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
   render();
+}
+function summonBoss(){
+  if(boss||intermission)return;men.forEach(m=>m.el.remove());men.length=0;
+  boss={isBoss:true,x:area.clientWidth/2,y:area.clientHeight*.36,r:68,hp:500,maxHp:500};
+  const el=document.getElementById('boss');el.style.display='block';el.style.left=boss.x+'px';el.style.top=boss.y+'px';
+  document.getElementById('bossBar').style.display='block';document.getElementById('bossHpText').textContent='500 / 500';document.querySelector('#bossHealth i').style.width='100%';goblin();render();
+}
+function defeatBoss(){
+  if(!boss)return;boss=null;intermission=true;document.getElementById('boss').style.display='none';document.getElementById('bossBar').style.display='none';
+  const wash=document.getElementById('bloodWash'),scare=document.getElementById('scare');wash.classList.remove('show');void wash.offsetWidth;wash.classList.add('show');
+  for(let i=0;i<260;i++){const a=Math.random()*6.28,sp=80+Math.random()*560;P({t:'blood',x:area.clientWidth/2,y:area.clientHeight/2,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-100,g:360,life:1.1+Math.random()*1.4,r:2+Math.random()*4,c:['#9e071e','#d21e38','#5e0715'][i%3]});}
+  scare.classList.add('show');shriek();setTimeout(()=>scare.classList.remove('show'),1350);
+  setTimeout(()=>{stage++;waveGoal=Math.ceil(waveGoal*1.2);waveKills=0;intermission=false;nextSpawn=performance.now()+500;render();},2600);render();
 }
 function drawFx(dt){
   const w = area.clientWidth, h = area.clientHeight, c = fxc; c.clearRect(0,0,w,h);
@@ -575,7 +601,8 @@ function frame(now){
   const dt = Math.min((now-lastT)/1000, .05); lastT = now;
   const w = area.clientWidth, y0 = Y0(), y1 = Y1();
   if (w > 0){
-    if (men.length < MAX_MEN && now > nextSpawn){ spawn(); nextSpawn = now + 250 + Math.random()*500; }
+    if(!boss&&!intermission&&men.length<MAX_MEN&&now>nextSpawn){spawn();nextSpawn=now+250+Math.random()*500;}
+    if(boss){boss.x=area.clientWidth/2+Math.sin(now/650)*Math.min(36,area.clientWidth*.08);boss.y=area.clientHeight*.36+Math.sin(now/420)*7;const be=document.getElementById('boss');be.style.left=boss.x+'px';be.style.top=boss.y+'px';}
     for (const m of men){
       if (now > m.turn) newDir(m);
       if (m.type === 'k' && Math.random() < dt*1.3){ m.vx *= -1; m.vy = (Math.random()-.5)*320; }
@@ -612,11 +639,7 @@ setInterval(()=>{
 setInterval(save, 5000);
 document.addEventListener('visibilitychange', save);
 
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on', x===b));
-  document.querySelectorAll('section').forEach(s=>s.classList.toggle('on', s.id===b.dataset.tab));
-  document.getElementById('energyBox').style.display = b.dataset.tab==='play' ? '' : 'none';
-});
+// Panel ulepszeń jest wysuwany bez przełączania sceny gry.
 renderShop(); render(); drawScene();
 </script>
 </body>
